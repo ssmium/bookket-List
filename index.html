@@ -24,7 +24,6 @@
   ::placeholder{color:#C2C9D2;}
   .wrap{max-width:720px;margin:0 auto;}
 
-  /* header */
   header{position:sticky;top:0;z-index:20;background:rgba(251,250,247,.86);
     backdrop-filter:saturate(180%) blur(12px);-webkit-backdrop-filter:saturate(180%) blur(12px);
     border-bottom:1px solid var(--line);}
@@ -32,6 +31,8 @@
   .logo{display:flex;align-items:baseline;gap:8px;}
   .logo h1{font-size:24px;font-weight:800;letter-spacing:-.03em;margin:0;}
   .logo span{font-size:13px;color:var(--gray-light);font-weight:500;}
+  .head-right{display:flex;align-items:center;gap:8px;}
+  .sync-dot{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;}
   .add-btn{display:flex;align-items:center;gap:4px;background:var(--blue);color:#fff;border:none;
     border-radius:12px;padding:9px 14px;font-size:14px;font-weight:700;cursor:pointer;
     box-shadow:0 4px 12px rgba(49,130,246,.28);}
@@ -45,13 +46,11 @@
     min-width:18px;text-align:center;padding:1px 0;}
   .tab.on .cnt{color:var(--blue);background:#EAF2FE;padding:1px 7px;}
 
-  /* filters */
   .filters{display:flex;gap:8px;padding:16px 20px 0;}
   .chip{border:1.5px solid var(--line);background:#fff;color:var(--gray);border-radius:999px;
     padding:7px 14px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;}
   .chip .n{margin-left:6px;opacity:.8;}
 
-  /* shelf */
   main{padding:24px 20px 120px;}
   .shelf-rows{display:flex;flex-direction:column;gap:8px;}
   .row-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:end;}
@@ -72,7 +71,6 @@
   .booktitle{margin-top:8px;font-size:12px;font-weight:600;color:var(--ink);text-align:center;line-height:1.35;
     letter-spacing:-.01em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 
-  /* empty */
   .empty{text-align:center;padding:70px 20px;color:var(--gray);}
   .empty .big{font-size:46px;margin-bottom:12px;}
   .empty .h{font-size:16px;font-weight:700;color:var(--ink);margin:0 0 6px;}
@@ -81,7 +79,6 @@
     font-size:14px;font-weight:700;cursor:pointer;}
   .loading{text-align:center;color:var(--gray-light);padding:80px 0;}
 
-  /* sheet */
   .overlay{position:fixed;inset:0;z-index:50;background:rgba(20,25,35,.42);display:flex;
     align-items:flex-end;justify-content:center;animation:fadeIn .18s ease;}
   .sheet{width:100%;max-width:520px;background:#fff;border-radius:22px 22px 0 0;padding:10px 22px 26px;
@@ -131,7 +128,10 @@
     <div class="wrap">
       <div class="head-top">
         <div class="logo"><h1>책킷리스트</h1><span>bookit list</span></div>
-        <button class="add-btn" id="addBtn"><b>+</b> 책 담기</button>
+        <div class="head-right">
+          <span class="sync-dot" id="syncDot"></span>
+          <button class="add-btn" id="addBtn"><b>+</b> 책 담기</button>
+        </div>
       </div>
       <div class="tabs" id="tabs"></div>
     </div>
@@ -146,43 +146,61 @@
 (function(){
   "use strict";
 
-  var STORAGE_KEY = "bookit:books";
+  /* =========================================================
+     ▼▼▼ 여기 두 줄만 본인 Supabase 값으로 바꾸세요 ▼▼▼
+     (비워두면 자동으로 이 기기에만 저장되는 localStorage 모드로 동작) */
+  var SUPABASE_URL = "";   // 예: https://abcdxyz.supabase.co
+  var SUPABASE_KEY = "";   // anon public key
+  /* ▲▲▲ 여기까지 ▲▲▲
+     ========================================================= */
 
-  /* ---- storage: window.storage (artifact) → localStorage (browser/GitHub Pages) ---- */
+  var LS_KEY = "bookit:books";
+  var useCloud = !!(SUPABASE_URL && SUPABASE_KEY);
+  var H  = useCloud ? { apikey:SUPABASE_KEY, "Authorization":"Bearer "+SUPABASE_KEY } : {};
+  var HJ = useCloud ? Object.assign({}, H, {"Content-Type":"application/json"}) : {};
+
+  function toRow(b){ return {
+    id:b.id, image_url:b.imageUrl, title:b.title, source:b.source,
+    memo:b.memo, status:b.status, created_at:b.createdAt
+  };}
+  function fromRow(r){ return {
+    id:r.id, imageUrl:r.image_url||"", title:r.title||"", source:r.source||"aladin",
+    memo:r.memo||"", status:r.status||"wishlist", createdAt:Number(r.created_at)||0
+  };}
+  function saveLocal(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state.books)); }catch(e){} }
+
   var store = {
     async load(){
-      try{
-        if(window.storage && window.storage.get){
-          var r = await window.storage.get(STORAGE_KEY);
-          return r && r.value ? JSON.parse(r.value) : [];
-        }
-      }catch(e){}
-      try{
-        var v = localStorage.getItem(STORAGE_KEY);
-        return v ? JSON.parse(v) : [];
-      }catch(e){ return []; }
+      if(useCloud){
+        var r = await fetch(SUPABASE_URL+"/rest/v1/books?select=*&order=created_at.desc", {headers:H});
+        if(!r.ok) throw new Error("load "+r.status);
+        return (await r.json()).map(fromRow);
+      }
+      try{ var v=localStorage.getItem(LS_KEY); return v?JSON.parse(v):[]; }catch(e){ return []; }
     },
-    async save(books){
-      var json = JSON.stringify(books);
-      try{
-        if(window.storage && window.storage.set){
-          await window.storage.set(STORAGE_KEY, json);
-          return;
-        }
-      }catch(e){}
-      try{ localStorage.setItem(STORAGE_KEY, json); }catch(e){}
+    async add(b){
+      if(useCloud){
+        var r = await fetch(SUPABASE_URL+"/rest/v1/books", {method:"POST",headers:HJ,body:JSON.stringify(toRow(b))});
+        if(!r.ok) throw new Error("add "+r.status);
+      } else saveLocal();
+    },
+    async patch(id, p){
+      if(useCloud){
+        var body={}; if("memo" in p)body.memo=p.memo; if("source" in p)body.source=p.source; if("status" in p)body.status=p.status;
+        var r = await fetch(SUPABASE_URL+"/rest/v1/books?id=eq."+encodeURIComponent(id), {method:"PATCH",headers:HJ,body:JSON.stringify(body)});
+        if(!r.ok) throw new Error("patch "+r.status);
+      } else saveLocal();
+    },
+    async remove(id){
+      if(useCloud){
+        var r = await fetch(SUPABASE_URL+"/rest/v1/books?id=eq."+encodeURIComponent(id), {method:"DELETE",headers:H});
+        if(!r.ok) throw new Error("remove "+r.status);
+      } else saveLocal();
     }
   };
 
-  var TABS = [
-    {key:"wishlist",label:"위시리스트"},
-    {key:"hold",label:"보류함"}
-  ];
-  var FILTERS = [
-    {key:"all",label:"전체"},
-    {key:"aladin",label:"알라딘"},
-    {key:"store",label:"서점"}
-  ];
+  var TABS = [{key:"wishlist",label:"위시리스트"},{key:"hold",label:"보류함"}];
+  var FILTERS = [{key:"all",label:"전체"},{key:"aladin",label:"알라딘"},{key:"store",label:"서점"}];
   var SRC = {
     aladin:{label:"알라딘",full:"알라딘에서 찾기",c:"var(--aladin)",bg:"var(--aladin-bg)"},
     store:{label:"서점",full:"서점에서 찾기",c:"var(--store)",bg:"var(--store-bg)"}
@@ -193,246 +211,171 @@
   function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
   function esc(s){ return (s||"").replace(/[&<>"']/g,function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function fail(msg){ alert(msg+"\n\n동기화 서버 연결을 확인하고 새로고침 해주세요."); }
 
-  async function persist(){ await store.save(state.books); }
+  function render(){ renderSync(); renderTabs(); renderFilters(); renderMain(); }
 
-  /* ---------- render ---------- */
-  function render(){
-    renderTabs();
-    renderFilters();
-    renderMain();
+  function renderSync(){
+    var el = document.getElementById("syncDot");
+    if(useCloud){ el.textContent="☁ 동기화"; el.style.cssText="background:#EAF2FE;color:var(--blue);"; }
+    else{ el.textContent="이 기기만"; el.style.cssText="background:#F1F3F5;color:var(--gray);"; }
   }
-
   function renderTabs(){
-    var el = document.getElementById("tabs");
-    el.innerHTML = TABS.map(function(t){
+    document.getElementById("tabs").innerHTML = TABS.map(function(t){
       var n = state.books.filter(function(b){return b.status===t.key;}).length;
-      return '<button class="tab '+(state.tab===t.key?"on":"")+'" data-tab="'+t.key+'">'
-        + t.label + '<span class="cnt">'+n+'</span></button>';
+      return '<button class="tab '+(state.tab===t.key?"on":"")+'" data-tab="'+t.key+'">'+t.label+'<span class="cnt">'+n+'</span></button>';
     }).join("");
   }
-
   function renderFilters(){
     var inTab = state.books.filter(function(b){return b.status===state.tab;});
-    var el = document.getElementById("filters");
-    el.innerHTML = FILTERS.map(function(f){
-      var n = f.key==="all" ? inTab.length : inTab.filter(function(b){return b.source===f.key;}).length;
+    document.getElementById("filters").innerHTML = FILTERS.map(function(f){
+      var n = f.key==="all"?inTab.length:inTab.filter(function(b){return b.source===f.key;}).length;
       var on = state.filter===f.key;
       var c = f.key==="aladin"?"var(--aladin)":f.key==="store"?"var(--store)":"var(--ink)";
-      var stl = on ? 'style="border-color:'+c+';background:'+c+';color:#fff;"' : '';
+      var stl = on?'style="border-color:'+c+';background:'+c+';color:#fff;"':'';
       return '<button class="chip" '+stl+' data-filter="'+f.key+'">'+f.label+'<span class="n">'+n+'</span></button>';
     }).join("");
   }
-
   function renderMain(){
     var m = document.getElementById("main");
-    if(!state.loaded){ m.innerHTML = '<div class="loading">책장 여는 중…</div>'; return; }
+    if(!state.loaded){ m.innerHTML='<div class="loading">책장 여는 중…</div>'; return; }
     var inTab = state.books.filter(function(b){return b.status===state.tab;});
     var visible = inTab.filter(function(b){ return state.filter==="all"||b.source===state.filter; });
-
-    if(visible.length===0){ m.innerHTML = emptyHTML(); return; }
-
-    var rows = [];
-    for(var i=0;i<visible.length;i+=3) rows.push(visible.slice(i,i+3));
-    m.innerHTML = '<div class="shelf-rows">' + rows.map(function(row){
-      return '<div><div class="row-grid">' + row.map(bookHTML).join("") + '</div><div class="board"></div></div>';
-    }).join("") + '</div>';
+    if(visible.length===0){ m.innerHTML=emptyHTML(); return; }
+    var rows=[]; for(var i=0;i<visible.length;i+=3) rows.push(visible.slice(i,i+3));
+    m.innerHTML='<div class="shelf-rows">'+rows.map(function(row){
+      return '<div><div class="row-grid">'+row.map(bookHTML).join("")+'</div><div class="board"></div></div>';
+    }).join("")+'</div>';
   }
-
   function bookHTML(b){
-    var s = SRC[b.source] || SRC.aladin;
-    var cover;
-    if(b.imageUrl){
-      cover = '<img src="'+esc(b.imageUrl)+'" alt="'+esc(b.title)+'" '
-        + 'onerror="this.parentNode.innerHTML=this.parentNode.dataset.ph + this.parentNode.querySelector(\'.srcdot\').outerHTML"/>';
-    }else{
-      cover = '<div class="ph"><span class="ico">📖</span><span class="t">'+(esc(b.title)||"이미지 없음")+'</span></div>';
-    }
-    var phFallback = '<div class="ph"><span class="ico">📖</span><span class="t">'+(esc(b.title)||"이미지 없음")+'</span></div>';
-    var dot = '<span class="srcdot" style="background:'+s.bg+';color:'+s.c+';">'+s.label+'</span>';
+    var s = SRC[b.source]||SRC.aladin;
+    var phFallback='<div class="ph"><span class="ico">📖</span><span class="t">'+(esc(b.title)||"이미지 없음")+'</span></div>';
+    var dot='<span class="srcdot" style="background:'+s.bg+';color:'+s.c+';">'+s.label+'</span>';
+    var cover = b.imageUrl
+      ? '<img src="'+esc(b.imageUrl)+'" alt="'+esc(b.title)+'" onerror="this.parentNode.innerHTML=this.parentNode.dataset.ph + this.parentNode.querySelector(\'.srcdot\').outerHTML"/>'
+      : phFallback;
     return '<button class="book" data-id="'+b.id+'">'
       + '<div class="cover" data-ph=\''+phFallback.replace(/'/g,"&#39;")+'\'>'+cover+dot+'</div>'
-      + (b.title ? '<span class="booktitle">'+esc(b.title)+'</span>' : '')
-      + '</button>';
+      + (b.title?'<span class="booktitle">'+esc(b.title)+'</span>':'')+'</button>';
   }
-
   function emptyHTML(){
     var isHold = state.tab==="hold";
-    var h = state.filter!=="all" ? "이 분류엔 아직 책이 없어요"
-      : isHold ? "보류한 책이 없어요" : "책장이 비어있어요";
-    var d = isHold ? "위시리스트에서 별로였던 책을 보류함으로 옮겨두세요."
-      : "읽고 싶은 책 표지 이미지를 담아 책장을 채워보세요.";
-    return '<div class="empty"><div class="big">'+(isHold?"📦":"🪧")+'</div>'
-      + '<p class="h">'+h+'</p><p class="d">'+d+'</p>'
+    var h = state.filter!=="all"?"이 분류엔 아직 책이 없어요":isHold?"보류한 책이 없어요":"책장이 비어있어요";
+    var d = isHold?"위시리스트에서 별로였던 책을 보류함으로 옮겨두세요.":"읽고 싶은 책 표지 이미지를 담아 책장을 채워보세요.";
+    return '<div class="empty"><div class="big">'+(isHold?"📦":"🪧")+'</div><p class="h">'+h+'</p><p class="d">'+d+'</p>'
       + (isHold?"":'<button class="cta" id="emptyAdd">첫 책 담기</button>')+'</div>';
   }
 
-  /* ---------- sheets ---------- */
   function openSheet(inner){
-    var root = document.getElementById("modalRoot");
-    root.innerHTML = '<div class="overlay" id="ov"><div class="sheet" id="sh">'
-      + '<div class="grab"></div>'+inner+'</div></div>';
-    document.getElementById("ov").addEventListener("click", function(e){
-      if(e.target.id==="ov") closeSheet();
-    });
+    var root=document.getElementById("modalRoot");
+    root.innerHTML='<div class="overlay" id="ov"><div class="sheet" id="sh"><div class="grab"></div>'+inner+'</div></div>';
+    document.getElementById("ov").addEventListener("click",function(e){ if(e.target.id==="ov") closeSheet(); });
   }
   function closeSheet(){ document.getElementById("modalRoot").innerHTML=""; }
-
   function segHTML(sel){
-    return '<div class="seg" id="seg">'
-      + Object.keys(SRC).map(function(k){
-          var on = sel===k; var c = SRC[k].c;
-          var stl = on ? 'style="border-color:'+c+';background:'+c+';color:#fff;"' : '';
-          return '<button data-src="'+k+'" '+stl+'>'+SRC[k].full+'</button>';
-        }).join("") + '</div>';
+    return '<div class="seg" id="seg">'+Object.keys(SRC).map(function(k){
+      var on=sel===k, c=SRC[k].c, stl=on?'style="border-color:'+c+';background:'+c+';color:#fff;"':'';
+      return '<button data-src="'+k+'" '+stl+'>'+SRC[k].full+'</button>';
+    }).join("")+'</div>';
   }
 
   function openAdd(){
     openSheet(
       '<h2>책 담기</h2>'
-      + '<div class="preview-row">'
-        + '<div class="pv" id="pv"><span class="ico">📖</span></div>'
+      + '<div class="preview-row"><div class="pv" id="pv"><span class="ico">📖</span></div>'
         + '<div class="pv-fields"><div class="field"><label>표지 이미지 URL</label>'
-          + '<input class="tx" id="fUrl" placeholder="이미지 주소 붙여넣기" /></div></div>'
-      + '</div>'
+        + '<input class="tx" id="fUrl" placeholder="이미지 주소 붙여넣기" /></div></div></div>'
       + '<div class="field"><label>제목 (선택)</label><input class="tx" id="fTitle" placeholder="책 제목" /></div>'
       + '<div class="field"><label>어디서 찾지?</label>'+segHTML("aladin")+'</div>'
-      + '<div class="field"><label>메모 (선택)</label>'
-        + '<textarea class="tx" id="fMemo" rows="2" placeholder="왜 사고 싶은지, 추천받은 이유 등"></textarea></div>'
+      + '<div class="field"><label>메모 (선택)</label><textarea class="tx" id="fMemo" rows="2" placeholder="왜 사고 싶은지, 추천받은 이유 등"></textarea></div>'
       + '<button class="submit" id="fSubmit" disabled>책장에 담기</button>'
     );
-
-    var src = "aladin";
-    var url = document.getElementById("fUrl");
-    var title = document.getElementById("fTitle");
-    var memo = document.getElementById("fMemo");
-    var submit = document.getElementById("fSubmit");
-    var pv = document.getElementById("pv");
+    var src="aladin";
+    var url=document.getElementById("fUrl"), title=document.getElementById("fTitle"),
+        memo=document.getElementById("fMemo"), submit=document.getElementById("fSubmit"), pv=document.getElementById("pv");
     url.focus();
-
-    function refresh(){
-      var has = url.value.trim() || title.value.trim();
-      submit.disabled = !has;
-      submit.style.background = has ? "var(--blue)" : "#C9D2DC";
-    }
-    function refreshPv(){
-      var u = url.value.trim();
-      if(u){
-        pv.innerHTML = '<img src="'+esc(u)+'" onerror="this.parentNode.innerHTML=\'<span class=&quot;ico&quot;>📖</span>\'"/>';
-      }else{ pv.innerHTML = '<span class="ico">📖</span>'; }
-    }
-    url.addEventListener("input", function(){ refresh(); refreshPv(); });
-    title.addEventListener("input", refresh);
-    title.addEventListener("keydown", function(e){ if(e.key==="Enter") doSubmit(); });
-
-    document.getElementById("seg").addEventListener("click", function(e){
-      var btn = e.target.closest("button[data-src]"); if(!btn) return;
-      src = btn.dataset.src;
-      Array.prototype.forEach.call(this.querySelectorAll("button"), function(b){
-        var k=b.dataset.src, on=k===src, c=SRC[k].c;
-        b.style.cssText = on ? "border-color:"+c+";background:"+c+";color:#fff;" : "";
-      });
+    function refresh(){ var has=url.value.trim()||title.value.trim(); submit.disabled=!has; submit.style.background=has?"var(--blue)":"#C9D2DC"; }
+    function refreshPv(){ var u=url.value.trim();
+      pv.innerHTML = u ? '<img src="'+esc(u)+'" onerror="this.parentNode.innerHTML=\'<span class=&quot;ico&quot;>📖</span>\'"/>' : '<span class="ico">📖</span>'; }
+    url.addEventListener("input",function(){refresh();refreshPv();});
+    title.addEventListener("input",refresh);
+    title.addEventListener("keydown",function(e){ if(e.key==="Enter") doSubmit(); });
+    document.getElementById("seg").addEventListener("click",function(e){
+      var btn=e.target.closest("button[data-src]"); if(!btn)return; src=btn.dataset.src;
+      Array.prototype.forEach.call(this.querySelectorAll("button"),function(b){
+        var k=b.dataset.src,on=k===src,c=SRC[k].c; b.style.cssText=on?"border-color:"+c+";background:"+c+";color:#fff;":""; });
     });
-
     async function doSubmit(){
       if(!url.value.trim() && !title.value.trim()) return;
-      state.books.unshift({
-        id:uid(), imageUrl:url.value.trim(), title:title.value.trim(),
-        source:src, memo:memo.value.trim(), status:"wishlist", createdAt:Date.now()
-      });
-      await persist(); closeSheet(); render();
+      var nb={ id:uid(), imageUrl:url.value.trim(), title:title.value.trim(), source:src, memo:memo.value.trim(), status:"wishlist", createdAt:Date.now() };
+      state.books.unshift(nb); closeSheet(); render();
+      try{ await store.add(nb); }catch(e){ state.books=state.books.filter(function(x){return x.id!==nb.id;}); render(); fail("책 저장에 실패했어요."); }
     }
-    submit.addEventListener("click", doSubmit);
+    submit.addEventListener("click",doSubmit);
   }
 
   function openDetail(book){
-    var s = SRC[book.source] || SRC.aladin;
-    var dateStr = new Date(book.createdAt).toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric"});
-    var other = book.status==="wishlist" ? "hold" : "wishlist";
-    var moveLabel = other==="hold" ? "보류함으로 옮기기" : "위시리스트로 되돌리기";
-    var coverInner = book.imageUrl
+    var s=SRC[book.source]||SRC.aladin;
+    var dateStr=new Date(book.createdAt).toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric"});
+    var other=book.status==="wishlist"?"hold":"wishlist";
+    var moveLabel=other==="hold"?"보류함으로 옮기기":"위시리스트로 되돌리기";
+    var coverInner=book.imageUrl
       ? '<img src="'+esc(book.imageUrl)+'" onerror="this.parentNode.innerHTML=\'<span style=&quot;font-size:30px&quot;>📖</span>\'"/>'
       : '<span style="font-size:30px">📖</span>';
-
     openSheet(
-      '<div class="detail-row">'
-        + '<div class="detail-cover">'+coverInner+'</div>'
-        + '<div style="flex:1;min-width:0;">'
-          + '<span class="srctag" style="background:'+s.bg+';color:'+s.c+';">'+s.full+'</span>'
-          + '<h3>'+(esc(book.title)||"제목 없음")+'</h3>'
-          + '<p class="date">'+dateStr+' 담음</p>'
-        + '</div>'
-      + '</div>'
-      + '<div class="field"><label>메모</label>'
-        + '<div class="memo-box" id="memoBox" style="color:'+(book.memo?"var(--ink)":"var(--gray-light)")+';">'
-        + (esc(book.memo)||"메모 추가하기")+'</div></div>'
+      '<div class="detail-row"><div class="detail-cover">'+coverInner+'</div>'
+      + '<div style="flex:1;min-width:0;"><span class="srctag" style="background:'+s.bg+';color:'+s.c+';">'+s.full+'</span>'
+      + '<h3>'+(esc(book.title)||"제목 없음")+'</h3><p class="date">'+dateStr+' 담음</p></div></div>'
+      + '<div class="field"><label>메모</label><div class="memo-box" id="memoBox" style="color:'+(book.memo?"var(--ink)":"var(--gray-light)")+';">'+(esc(book.memo)||"메모 추가하기")+'</div></div>'
       + '<div class="field"><label>구매처 바꾸기</label>'+segHTML(book.source)+'</div>'
-      + '<div class="actions">'
-        + '<button class="move-btn" id="moveBtn">'+moveLabel+'</button>'
-        + '<button class="del-btn" id="delBtn" aria-label="삭제">🗑</button>'
-      + '</div>'
+      + '<div class="actions"><button class="move-btn" id="moveBtn">'+moveLabel+'</button><button class="del-btn" id="delBtn" aria-label="삭제">🗑</button></div>'
     );
+    function local(id){ return state.books.find(function(x){return x.id===id;}); }
 
-    // memo edit
-    document.getElementById("memoBox").addEventListener("click", function(){
-      var box = this;
-      var ta = document.createElement("textarea");
-      ta.className="tx"; ta.rows=2; ta.value=book.memo||"";
-      box.replaceWith(ta); ta.focus();
-      ta.addEventListener("blur", async function(){
-        book.memo = ta.value.trim();
-        var b = state.books.find(function(x){return x.id===book.id;});
-        if(b) b.memo = book.memo;
-        await persist();
-        openDetail(book); // 상세창 다시 그려서 반영
+    document.getElementById("memoBox").addEventListener("click",function(){
+      var box=this, ta=document.createElement("textarea");
+      ta.className="tx"; ta.rows=2; ta.value=book.memo||""; box.replaceWith(ta); ta.focus();
+      ta.addEventListener("blur",async function(){
+        book.memo=ta.value.trim(); var b=local(book.id); if(b)b.memo=book.memo;
+        openDetail(book);
+        try{ await store.patch(book.id,{memo:book.memo}); }catch(e){ fail("메모 저장에 실패했어요."); }
       });
     });
-
-    // source switch
-    document.getElementById("seg").addEventListener("click", async function(e){
-      var btn = e.target.closest("button[data-src]"); if(!btn) return;
-      book.source = btn.dataset.src;
-      var b = state.books.find(function(x){return x.id===book.id;});
-      if(b) b.source = book.source;
-      await persist(); render();
-      openDetail(book);
+    document.getElementById("seg").addEventListener("click",async function(e){
+      var btn=e.target.closest("button[data-src]"); if(!btn)return;
+      book.source=btn.dataset.src; var b=local(book.id); if(b)b.source=book.source;
+      render(); openDetail(book);
+      try{ await store.patch(book.id,{source:book.source}); }catch(e){ fail("구매처 변경에 실패했어요."); }
     });
-
-    document.getElementById("moveBtn").addEventListener("click", async function(){
-      var b = state.books.find(function(x){return x.id===book.id;});
-      if(b) b.status = other;
-      await persist(); closeSheet(); render();
+    document.getElementById("moveBtn").addEventListener("click",async function(){
+      var b=local(book.id); if(b)b.status=other; closeSheet(); render();
+      try{ await store.patch(book.id,{status:other}); }catch(e){ fail("이동에 실패했어요."); }
     });
-    document.getElementById("delBtn").addEventListener("click", async function(){
-      if(confirm("이 책을 책장에서 뺄까요?")){
-        state.books = state.books.filter(function(x){return x.id!==book.id;});
-        await persist(); closeSheet(); render();
-      }
+    document.getElementById("delBtn").addEventListener("click",async function(){
+      if(!confirm("이 책을 책장에서 뺄까요?")) return;
+      var backup=state.books.slice();
+      state.books=state.books.filter(function(x){return x.id!==book.id;}); closeSheet(); render();
+      try{ await store.remove(book.id); }catch(e){ state.books=backup; render(); fail("삭제에 실패했어요."); }
     });
   }
 
-  /* ---------- events ---------- */
-  document.getElementById("addBtn").addEventListener("click", openAdd);
-  document.getElementById("tabs").addEventListener("click", function(e){
-    var t = e.target.closest(".tab"); if(!t) return;
-    state.tab = t.dataset.tab; state.filter="all"; render();
+  document.getElementById("addBtn").addEventListener("click",openAdd);
+  document.getElementById("tabs").addEventListener("click",function(e){
+    var t=e.target.closest(".tab"); if(!t)return; state.tab=t.dataset.tab; state.filter="all"; render();
   });
-  document.getElementById("filters").addEventListener("click", function(e){
-    var c = e.target.closest(".chip"); if(!c) return;
-    state.filter = c.dataset.filter; render();
+  document.getElementById("filters").addEventListener("click",function(e){
+    var c=e.target.closest(".chip"); if(!c)return; state.filter=c.dataset.filter; render();
   });
-  document.getElementById("main").addEventListener("click", function(e){
+  document.getElementById("main").addEventListener("click",function(e){
     if(e.target.closest("#emptyAdd")){ openAdd(); return; }
-    var bk = e.target.closest(".book"); if(!bk) return;
-    var book = state.books.find(function(x){return x.id===bk.dataset.id;});
-    if(book) openDetail(book);
+    var bk=e.target.closest(".book"); if(!bk)return;
+    var book=state.books.find(function(x){return x.id===bk.dataset.id;}); if(book) openDetail(book);
   });
 
-  /* ---------- init ---------- */
   (async function(){
-    state.books = await store.load();
-    state.loaded = true;
-    render();
+    try{ state.books = await store.load(); }
+    catch(e){ console.error(e); alert("책장을 불러오지 못했어요. Supabase 설정(URL/KEY)과 테이블을 확인해주세요."); state.books=[]; }
+    state.loaded=true; render();
   })();
 })();
 </script>
