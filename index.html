@@ -100,6 +100,9 @@
   .submit{width:100%;margin-top:8px;background:var(--blue);color:#fff;border:none;border-radius:14px;
     padding:15px 0;font-size:15.5px;font-weight:800;cursor:pointer;}
   .submit:disabled{background:#C9D2DC;cursor:default;}
+  .photo-btn{width:100%;border:1.5px dashed var(--blue);background:#F4F8FF;color:var(--blue);
+    border-radius:12px;padding:13px 0;font-size:13.5px;font-weight:700;cursor:pointer;}
+  .photo-btn.picked{border-style:solid;background:#EAF2FE;}
 
   .preview-row{display:flex;gap:16px;margin-bottom:18px;}
   .pv{width:84px;flex-shrink:0;aspect-ratio:2/3;border-radius:8px;background:#F2F0EB;overflow:hidden;
@@ -213,6 +216,25 @@
     return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
   function fail(msg){ alert(msg+"\n\n동기화 서버 연결을 확인하고 새로고침 해주세요."); }
 
+  // 사진 파일을 적당히 줄여서 data URL(base64)로 변환 — 별도 저장소 없이 DB에 함께 저장
+  function fileToDataURL(file, maxSide, quality){
+    return new Promise(function(resolve,reject){
+      var reader=new FileReader();
+      reader.onload=function(){
+        var img=new Image();
+        img.onload=function(){
+          var w=img.width, h=img.height, scale=Math.min(1, maxSide/Math.max(w,h));
+          var cw=Math.round(w*scale), ch=Math.round(h*scale);
+          var cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
+          cv.getContext("2d").drawImage(img,0,0,cw,ch);
+          try{ resolve(cv.toDataURL("image/jpeg", quality)); }catch(e){ reject(e); }
+        };
+        img.onerror=reject; img.src=reader.result;
+      };
+      reader.onerror=reject; reader.readAsDataURL(file);
+    });
+  }
+
   function render(){ renderSync(); renderTabs(); renderFilters(); renderMain(); }
 
   function renderSync(){
@@ -283,21 +305,40 @@
     openSheet(
       '<h2>책 담기</h2>'
       + '<div class="preview-row"><div class="pv" id="pv"><span class="ico">📖</span></div>'
-        + '<div class="pv-fields"><div class="field"><label>표지 이미지 URL</label>'
-        + '<input class="tx" id="fUrl" placeholder="이미지 주소 붙여넣기" /></div></div></div>'
+        + '<div class="pv-fields"><div class="field"><label>표지 이미지</label>'
+        + '<button type="button" class="photo-btn" id="fPhoto">📷 사진에서 고르기</button>'
+        + '<input class="tx" id="fUrl" placeholder="또는 이미지 주소 붙여넣기" style="margin-top:8px;" />'
+        + '<input type="file" id="fFile" accept="image/*" style="display:none;" /></div></div></div>'
       + '<div class="field"><label>제목 (선택)</label><input class="tx" id="fTitle" placeholder="책 제목" /></div>'
       + '<div class="field"><label>어디서 찾지?</label>'+segHTML("aladin")+'</div>'
       + '<div class="field"><label>메모 (선택)</label><textarea class="tx" id="fMemo" rows="2" placeholder="왜 사고 싶은지, 추천받은 이유 등"></textarea></div>'
       + '<button class="submit" id="fSubmit" disabled>책장에 담기</button>'
     );
-    var src="aladin";
+    var src="aladin", imageData="";
     var url=document.getElementById("fUrl"), title=document.getElementById("fTitle"),
-        memo=document.getElementById("fMemo"), submit=document.getElementById("fSubmit"), pv=document.getElementById("pv");
-    url.focus();
-    function refresh(){ var has=url.value.trim()||title.value.trim(); submit.disabled=!has; submit.style.background=has?"var(--blue)":"#C9D2DC"; }
-    function refreshPv(){ var u=url.value.trim();
-      pv.innerHTML = u ? '<img src="'+esc(u)+'" onerror="this.parentNode.innerHTML=\'<span class=&quot;ico&quot;>📖</span>\'"/>' : '<span class="ico">📖</span>'; }
-    url.addEventListener("input",function(){refresh();refreshPv();});
+        memo=document.getElementById("fMemo"), submit=document.getElementById("fSubmit"),
+        pv=document.getElementById("pv"), photo=document.getElementById("fPhoto"), file=document.getElementById("fFile");
+
+    function refresh(){ var has=imageData||title.value.trim(); submit.disabled=!has; submit.style.background=has?"var(--blue)":"#C9D2DC"; }
+    function refreshPv(){
+      pv.innerHTML = imageData ? '<img src="'+imageData+'" onerror="this.parentNode.innerHTML=\'<span class=&quot;ico&quot;>📖</span>\'"/>' : '<span class="ico">📖</span>'; }
+
+    // URL 입력
+    url.addEventListener("input",function(){ imageData=url.value.trim();
+      photo.classList.remove("picked"); photo.textContent="📷 사진에서 고르기"; refresh(); refreshPv(); });
+
+    // 사진 선택 (모바일: 갤러리/카메라)
+    photo.addEventListener("click",function(){ file.click(); });
+    file.addEventListener("change",async function(){
+      var f=file.files&&file.files[0]; if(!f) return;
+      photo.textContent="불러오는 중…";
+      try{
+        imageData = await fileToDataURL(f, 520, 0.82);
+        url.value=""; photo.classList.add("picked"); photo.textContent="✅ 사진 선택됨 · 바꾸려면 탭";
+        refresh(); refreshPv();
+      }catch(e){ photo.textContent="📷 사진에서 고르기"; alert("이미지를 불러오지 못했어요. 다른 사진으로 해보세요."); }
+    });
+
     title.addEventListener("input",refresh);
     title.addEventListener("keydown",function(e){ if(e.key==="Enter") doSubmit(); });
     document.getElementById("seg").addEventListener("click",function(e){
@@ -306,8 +347,8 @@
         var k=b.dataset.src,on=k===src,c=SRC[k].c; b.style.cssText=on?"border-color:"+c+";background:"+c+";color:#fff;":""; });
     });
     async function doSubmit(){
-      if(!url.value.trim() && !title.value.trim()) return;
-      var nb={ id:uid(), imageUrl:url.value.trim(), title:title.value.trim(), source:src, memo:memo.value.trim(), status:"wishlist", createdAt:Date.now() };
+      if(!imageData && !title.value.trim()) return;
+      var nb={ id:uid(), imageUrl:imageData, title:title.value.trim(), source:src, memo:memo.value.trim(), status:"wishlist", createdAt:Date.now() };
       state.books.unshift(nb); closeSheet(); render();
       try{ await store.add(nb); }catch(e){ state.books=state.books.filter(function(x){return x.id!==nb.id;}); render(); fail("책 저장에 실패했어요."); }
     }
