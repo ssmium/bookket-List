@@ -183,7 +183,7 @@
   };}
   function fromRow(r){ return {
     id:r.id, imageUrl:r.image_url||"", title:r.title||"", source:r.source||"aladin",
-    memo:r.memo||"", status:r.status||"wishlist", createdAt:Number(r.created_at)||0
+    memo:r.memo||"", status:(r.status==="done"?"bought":(r.status||"wishlist")), createdAt:Number(r.created_at)||0
   };}
   function saveLocal(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state.books)); }catch(e){} }
 
@@ -217,7 +217,7 @@
     }
   };
 
-  var TABS = [{key:"wishlist",label:"위시리스트"},{key:"hold",label:"보류함"}];
+  var TABS = [{key:"wishlist",label:"위시리스트"},{key:"hold",label:"보류함"},{key:"bought",label:"구매한 항목"}];
   var FILTERS = [{key:"all",label:"전체"},{key:"aladin",label:"알라딘"},{key:"store",label:"서점"}];
   var SRC = {
     aladin:{label:"알라딘",full:"알라딘에서 찾기",c:"var(--aladin)",bg:"var(--aladin-bg)"},
@@ -297,10 +297,16 @@
   }
   function emptyHTML(){
     var isHold = state.tab==="hold";
-    var h = state.filter!=="all"?"이 분류엔 아직 책이 없어요":isHold?"보류한 책이 없어요":"책장이 비어있어요";
-    var d = isHold?"위시리스트에서 별로였던 책을 보류함으로 옮겨두세요.":"읽고 싶은 책 표지 이미지를 담아 책장을 채워보세요.";
-    return '<div class="empty"><div class="big">'+(isHold?"📦":"🪧")+'</div><p class="h">'+h+'</p><p class="d">'+d+'</p>'
-      + (isHold?"":'<button class="cta" id="emptyAdd">첫 책 담기</button>')+'</div>';
+    var isBought = state.tab==="bought";
+    var h = state.filter!=="all" ? "이 분류엔 아직 책이 없어요"
+      : isBought ? "구매한 책이 없어요"
+      : isHold ? "보류한 책이 없어요" : "책장이 비어있어요";
+    var d = isBought ? "위시리스트나 보류함에서 구매한 책을 이곳으로 옮겨두세요."
+      : isHold ? "위시리스트에서 별로였던 책을 보류함으로 옮겨두세요."
+      : "읽고 싶은 책 표지 이미지를 담아 책장을 채워보세요.";
+    var icon = isBought ? "✅" : isHold ? "📦" : "🪧";
+    return '<div class="empty"><div class="big">'+icon+'</div><p class="h">'+h+'</p><p class="d">'+d+'</p>'
+      + (state.tab==="wishlist"?'<button class="cta" id="emptyAdd">첫 책 담기</button>':"")+'</div>';
   }
 
   function openSheet(inner){
@@ -370,11 +376,18 @@
     submit.addEventListener("click",doSubmit);
   }
 
+  function detailActionHTML(status){
+    var buttons = [];
+    if(status!=="bought") buttons.push('<button class="move-btn" data-status="bought">구매한 항목으로 이동</button>');
+    if(status!=="wishlist") buttons.push('<button class="move-btn" data-status="wishlist">위시리스트로 되돌리기</button>');
+    if(status!=="hold") buttons.push('<button class="move-btn" data-status="hold">보류함으로 옮기기</button>');
+    return buttons.join("");
+  }
+
   function openDetail(book){
     var s=SRC[book.source]||SRC.aladin;
     var dateStr=new Date(book.createdAt).toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric"});
-    var other=book.status==="wishlist"?"hold":"wishlist";
-    var moveLabel=other==="hold"?"보류함으로 옮기기":"위시리스트로 되돌리기";
+    var currentStatus = book.status || "wishlist";
     var coverInner=book.imageUrl
       ? '<img src="'+esc(book.imageUrl)+'" onerror="this.parentNode.innerHTML=\'<span style=&quot;font-size:30px&quot;>📖</span>\'"/>'
       : '<span style="font-size:30px">📖</span>';
@@ -384,7 +397,7 @@
       + '<h3>'+(esc(book.title)||"제목 없음")+'</h3><p class="date">'+dateStr+' 담음</p></div></div>'
       + '<div class="field"><label>메모</label><div class="memo-box" id="memoBox" style="color:'+(book.memo?"var(--ink)":"var(--gray-light)")+';">'+(esc(book.memo)||"메모 추가하기")+'</div></div>'
       + '<div class="field"><label>구매처 바꾸기</label>'+segHTML(book.source)+'</div>'
-      + '<div class="actions"><button class="move-btn" id="moveBtn">'+moveLabel+'</button><button class="del-btn" id="delBtn" aria-label="삭제">🗑</button></div>'
+      + '<div class="actions">'+detailActionHTML(currentStatus)+'<button class="del-btn" id="delBtn" aria-label="삭제">🗑</button></div>'
     );
     function local(id){ return state.books.find(function(x){return x.id===id;}); }
 
@@ -403,9 +416,14 @@
       render(); openDetail(book);
       try{ await store.patch(book.id,{source:book.source}); }catch(e){ fail("구매처 변경에 실패했어요."); }
     });
-    document.getElementById("moveBtn").addEventListener("click",async function(){
-      var b=local(book.id); if(b)b.status=other; closeSheet(); render();
-      try{ await store.patch(book.id,{status:other}); }catch(e){ fail("이동에 실패했어요."); }
+    var actions = document.querySelector(".actions");
+    actions.addEventListener("click", async function(e){
+      var btn = e.target.closest("button[data-status]"); if(!btn) return;
+      var nextStatus = btn.dataset.status;
+      book.status = nextStatus;
+      var b=local(book.id); if(b)b.status=nextStatus;
+      closeSheet(); render();
+      try{ await store.patch(book.id,{status:nextStatus}); }catch(e){ fail("이동에 실패했어요."); }
     });
     document.getElementById("delBtn").addEventListener("click",async function(){
       if(!confirm("이 책을 책장에서 뺄까요?")) return;
@@ -429,7 +447,7 @@
   });
 
   (async function(){
-    try{ state.books = await store.load(); }
+    try{ state.books = (await store.load()).map(function(b){ if(b.status==="done") b.status="bought"; return b; }); }
     catch(e){ console.error(e); alert("책장을 불러오지 못했어요. Supabase 설정(URL/KEY)과 테이블을 확인해주세요."); state.books=[]; }
     state.loaded=true; render();
   })();
